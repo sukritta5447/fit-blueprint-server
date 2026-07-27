@@ -266,6 +266,28 @@ app.get("/", (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+app.get("/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+
+    return res.status(200).json({
+      status: "ok",
+      database: "connected",
+    });
+  } catch (error) {
+    console.error("Database health check failed:", error);
+
+    return res.status(503).json({
+      status: "error",
+      database: "disconnected",
+    });
+  }
 });
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+export default app;
