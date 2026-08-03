@@ -1,17 +1,17 @@
 import * as pg from "pg";
 const { Pool } = pg.default;
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is required");
+if (!process.env.CONNECTION_STRING) {
+  throw new Error("CONNECTION_STRING is required");
 }
 
-const databaseUrl = new URL(process.env.DATABASE_URL);
+const databaseUrl = new URL(process.env.CONNECTION_STRING);
 const isLocalDatabase = ["localhost", "127.0.0.1"].includes(
   databaseUrl.hostname,
 );
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.CONNECTION_STRING,
   ssl: isLocalDatabase ? false : { rejectUnauthorized: false },
 });
 
