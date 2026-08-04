@@ -1,0 +1,56 @@
+import { Router } from "express";
+import authenticate from "../middlewares/authenticate.mjs";
+import { parsePositiveId } from "../utils/api.mjs";
+import pool from "../utils/db.mjs";
+
+const router = Router({ mergeParams: true });
+router.use(authenticate);
+
+router.put("/", async (req, res, next) => {
+  try {
+    const postId = parsePositiveId(req.params.postId, "postId");
+    const result = await pool.query(
+      `WITH published_post AS (
+         SELECT posts.id
+         FROM posts
+         JOIN statuses ON statuses.id = posts.status_id
+         WHERE posts.id = $1 AND statuses.is_public
+       ), inserted AS (
+         INSERT INTO post_likes (post_id, user_id)
+         SELECT id, $2 FROM published_post
+         ON CONFLICT (post_id, user_id) DO NOTHING
+         RETURNING post_id
+       )
+       SELECT
+         EXISTS (SELECT 1 FROM published_post) AS post_exists,
+         EXISTS (SELECT 1 FROM inserted) AS inserted`,
+      [postId, req.auth.userId],
+    );
+
+    if (!result.rows[0].post_exists) {
+      return res.status(404).json({
+        code: "post_not_found",
+        message: "The requested published post was not found",
+      });
+    }
+
+    return res.status(result.rows[0].inserted ? 201 : 200).json({ liked: true });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.delete("/", async (req, res, next) => {
+  try {
+    const postId = parsePositiveId(req.params.postId, "postId");
+    await pool.query(
+      "DELETE FROM post_likes WHERE post_id = $1 AND user_id = $2",
+      [postId, req.auth.userId],
+    );
+    return res.status(204).send();
+  } catch (error) {
+    return next(error);
+  }
+});
+
+export default router;

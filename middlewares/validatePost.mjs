@@ -1,35 +1,38 @@
-const postFields = [
-  { key: "title", label: "Title", type: "string" },
-  { key: "image", label: "Image", type: "string" },
-  { key: "category_id", label: "Category id", type: "number" },
-  { key: "description", label: "Description", type: "string" },
-  { key: "content", label: "Content", type: "string" },
-  { key: "status_id", label: "Status id", type: "number" },
+import { pickBody } from "../utils/api.mjs";
+
+export const postFields = [
+  "title",
+  "slug",
+  "image",
+  "category_id",
+  "description",
+  "content",
+  "status_id",
+  "date",
+  "published_at",
 ];
 
-const isMissing = (value) =>
-  value === undefined || value === null || value === "";
+const requiredPostFields = [
+  "title",
+  "category_id",
+  "description",
+  "content",
+  "status_id",
+];
 
-const validatePost = (req, res, next) => {
-  const body = req.body ?? {};
-
-  for (const field of postFields) {
-    const value = body[field.key];
-
-    if (isMissing(value)) {
-      return res.status(400).json({
-        message: `${field.label} is required`,
-      });
+export function validatePost({ partial = false } = {}) {
+  return function validate(req, res, next) {
+    try {
+      req.validatedBody = pickBody(
+        req.body,
+        postFields,
+        partial ? [] : requiredPostFields,
+      );
+      return next();
+    } catch (error) {
+      return next(error);
     }
+  };
+}
 
-    if (typeof value !== field.type) {
-      return res.status(400).json({
-        message: `${field.label} must be a ${field.type}`,
-      });
-    }
-  }
-
-  return next();
-};
-
-export default validatePost;
+export default validatePost();

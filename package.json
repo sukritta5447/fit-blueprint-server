@@ -5,13 +5,15 @@
   "main": "index.js",
   "scripts": {
     "start": "node src/app.mjs",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "set-user-role": "node scripts/setUserRole.mjs",
+    "test": "node --test --test-isolation=none"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@supabase/supabase-js": "2.112.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
