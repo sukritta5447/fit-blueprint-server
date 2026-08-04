@@ -1,64 +1,75 @@
 import { Router } from "express";
+import authenticate from "../middlewares/authenticate.mjs";
+import { authorizeRoles } from "../middlewares/authorizeRoles.mjs";
+import validatePost, {
+  postFields,
+  validatePost as createPostValidator,
+} from "../middlewares/validatePost.mjs";
+import {
+  buildUpdateClause,
+  getPagination,
+  parsePositiveId,
+} from "../utils/api.mjs";
 import pool from "../utils/db.mjs";
-import validatePost from "../middlewares/validatePost.mjs";
 
 const router = Router();
+const authorizeContentAdmin = authorizeRoles("content_admin", "super_admin");
 
 const postSelect = `
   SELECT
     posts.id,
     posts.image,
+    posts.slug,
+    posts.category_id,
     categories.name AS category,
     posts.title,
     posts.description,
     posts.date,
+    posts.published_at,
     posts.content,
+    posts.status_id,
     statuses.status,
-    posts.likes_count
+    posts.likes_count,
+    posts.created_at,
+    posts.updated_at
   FROM posts
   JOIN categories ON posts.category_id = categories.id
   JOIN statuses ON posts.status_id = statuses.id
 `;
 
-const isValidPostId = (postId) =>
-  Number.isInteger(Number(postId)) && Number(postId) > 0;
+router.post(
+  "/",
+  authenticate,
+  authorizeContentAdmin,
+  validatePost,
+  async (req, res, next) => {
+    try {
+      const input = req.validatedBody;
+      const fields = ["author_id", ...Object.keys(input)];
+      const values = [req.auth.userId, ...Object.values(input)];
+      const placeholders = values.map((_, index) => `$${index + 1}`).join(", ");
+      const result = await pool.query(
+        `INSERT INTO posts (${fields.join(", ")})
+         VALUES (${placeholders})
+         RETURNING *`,
+        values,
+      );
 
-router.post("/", validatePost, async (req, res) => {
-  const { title, image, category_id, description, content, status_id } =
-    req.body;
+      return res.status(201).json(result.rows[0]);
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
 
-  try {
-    await pool.query(
-      `INSERT INTO posts
-        (title, image, category_id, description, content, status_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [title, image, category_id, description, content, status_id],
-    );
-
-    return res.status(201).json({
-      message: "Created post sucessfully",
-    });
-  } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      message: "Server could not create post because database connection",
-    });
-  }
-});
-
-router.get("/", async (req, res) => {
-  const requestedPage = Number.parseInt(req.query.page, 10);
-  const requestedLimit = Number.parseInt(req.query.limit, 10);
-  const currentPage = requestedPage > 0 ? requestedPage : 1;
-  const limit = requestedLimit > 0 ? requestedLimit : 6;
-  const offset = (currentPage - 1) * limit;
+router.get("/", async (req, res, next) => {
+  const { page: currentPage, limit, offset } = getPagination(req.query, 6);
   const values = [];
-  const conditions = [];
+  const conditions = ["statuses.is_public = true"];
 
   if (req.query.category) {
     values.push(req.query.category);
-    conditions.push(`categories.name = $${values.length}`);
+    conditions.push(`categories.slug = $${values.length}`);
   }
 
   if (req.query.keyword) {
@@ -70,14 +81,14 @@ router.get("/", async (req, res) => {
     )`);
   }
 
-  const whereClause =
-    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const whereClause = `WHERE ${conditions.join(" AND ")}`;
 
   try {
     const countResult = await pool.query(
       `SELECT COUNT(*)::int AS total
        FROM posts
        JOIN categories ON posts.category_id = categories.id
+       JOIN statuses ON posts.status_id = statuses.id
        ${whereClause}`,
       values,
     );
@@ -88,7 +99,7 @@ router.get("/", async (req, res) => {
     const postsResult = await pool.query(
       `${postSelect}
        ${whereClause}
-       ORDER BY posts.date DESC
+       ORDER BY posts.date DESC, posts.id DESC
        LIMIT $${values.length + 1}
        OFFSET $${values.length + 2}`,
       listValues,
@@ -103,27 +114,59 @@ router.get("/", async (req, res) => {
       nextPage: currentPage < totalPages ? currentPage + 1 : null,
     });
   } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      message: "Server could not read post because database connection",
-    });
+    return next(error);
   }
 });
 
-router.get("/:postId", async (req, res) => {
-  const { postId } = req.params;
+router.get(
+  "/manage",
+  authenticate,
+  authorizeContentAdmin,
+  async (req, res, next) => {
+    try {
+      const result = await pool.query(
+        `${postSelect}
+         ORDER BY posts.updated_at DESC, posts.id DESC`,
+      );
+      return res.status(200).json({ data: result.rows });
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
 
-  if (!isValidPostId(postId)) {
-    return res.status(404).json({
-      message: "Server could not find a requested post",
-    });
-  }
+router.get(
+  "/manage/:postId",
+  authenticate,
+  authorizeContentAdmin,
+  async (req, res, next) => {
+    try {
+      const postId = parsePositiveId(req.params.postId, "postId");
+      const result = await pool.query(`${postSelect} WHERE posts.id = $1`, [
+        postId,
+      ]);
 
+      if (result.rowCount === 0) {
+        return res.status(404).json({
+          code: "post_not_found",
+          message: "The requested post was not found",
+        });
+      }
+
+      return res.status(200).json(result.rows[0]);
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
+
+router.get("/:postId", async (req, res, next) => {
   try {
+    const postId = parsePositiveId(req.params.postId, "postId");
     const result = await pool.query(
       `${postSelect}
-       WHERE posts.id = $1`,
+       WHERE posts.id = $1
+         AND statuses.is_public = true`,
       [postId],
     );
 
@@ -135,89 +178,70 @@ router.get("/:postId", async (req, res) => {
 
     return res.status(200).json(result.rows[0]);
   } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      message: "Server could not read post because database connection",
-    });
+    return next(error);
   }
 });
 
-router.put("/:postId", validatePost, async (req, res) => {
-  const { postId } = req.params;
-  const { title, image, category_id, description, content, status_id } =
-    req.body;
+router.patch(
+  "/:postId",
+  authenticate,
+  authorizeContentAdmin,
+  createPostValidator({ partial: true }),
+  async (req, res, next) => {
+    try {
+      const postId = parsePositiveId(req.params.postId, "postId");
+      const input = Object.fromEntries(
+        postFields
+          .filter((field) => req.validatedBody[field] !== undefined)
+          .map((field) => [field, req.validatedBody[field]]),
+      );
+      const { assignments, values } = buildUpdateClause(input);
+      const result = await pool.query(
+        `UPDATE posts
+         SET ${assignments}
+         WHERE id = $${values.length + 1}
+         RETURNING *`,
+        [...values, postId],
+      );
 
-  if (!isValidPostId(postId)) {
-    return res.status(404).json({
-      message: "Server could not find a requested post to update",
-    });
-  }
+      if (result.rowCount === 0) {
+        return res.status(404).json({
+          message: "Server could not find a requested post to update",
+        });
+      }
 
-  try {
-    const result = await pool.query(
-      `UPDATE posts
-       SET
-         title = $1,
-         image = $2,
-         category_id = $3,
-         description = $4,
-         content = $5,
-         status_id = $6
-       WHERE id = $7
-       RETURNING id`,
-      [title, image, category_id, description, content, status_id, postId],
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({
-        message: "Server could not find a requested post to update",
-      });
+      return res.status(200).json(result.rows[0]);
+    } catch (error) {
+      return next(error);
     }
+  },
+);
 
-    return res.status(200).json({
-      message: "Updated post sucessfully",
-    });
-  } catch (error) {
-    console.error(error);
+router.delete(
+  "/:postId",
+  authenticate,
+  authorizeContentAdmin,
+  async (req, res, next) => {
+    try {
+      const postId = parsePositiveId(req.params.postId, "postId");
+      const result = await pool.query(
+        "DELETE FROM posts WHERE id = $1 RETURNING id",
+        [postId],
+      );
 
-    return res.status(500).json({
-      message: "Server could not update post because database connection",
-    });
-  }
-});
+      if (result.rowCount === 0) {
+        return res.status(404).json({
+          message: "Server could not find a requested post to delete",
+        });
+      }
 
-router.delete("/:postId", async (req, res) => {
-  const { postId } = req.params;
-
-  if (!isValidPostId(postId)) {
-    return res.status(404).json({
-      message: "Server could not find a requested post to delete",
-    });
-  }
-
-  try {
-    const result = await pool.query(
-      "DELETE FROM posts WHERE id = $1 RETURNING id",
-      [postId],
-    );
-
-    if (result.rowCount === 0) {
-      return res.status(404).json({
-        message: "Server could not find a requested post to delete",
+      return res.status(200).json({
+        message: "Deleted post successfully",
       });
+    } catch (error) {
+      return next(error);
     }
-
-    return res.status(200).json({
-      message: "Deleted post sucessfully",
-    });
-  } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
-      message: "Server could not delete post because database connection",
-    });
-  }
-});
+  },
+);
 
 export default router;
