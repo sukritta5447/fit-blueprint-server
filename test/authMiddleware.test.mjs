@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createAuthenticate,
+  createOptionalAuthenticate,
   getBearerToken,
 } from "../middlewares/authenticate.mjs";
 import { authorizeRoles } from "../middlewares/authorizeRoles.mjs";
@@ -130,6 +131,33 @@ test("authenticate returns 403 for an inactive profile", async () => {
 
   assert.equal(res.statusCode, 403);
   assert.equal(res.body.code, "account_inactive");
+});
+
+test("optional authenticate permits a request without an Authorization header", async () => {
+  const optionalAuthenticate = createOptionalAuthenticate();
+  const req = createRequest();
+  const res = createResponse();
+  let nextCalled = false;
+
+  await optionalAuthenticate(req, res, () => {
+    nextCalled = true;
+  });
+
+  assert.equal(nextCalled, true);
+  assert.equal(req.auth, undefined);
+});
+
+test("optional authenticate verifies a supplied Bearer token", async () => {
+  const optionalAuthenticate = createOptionalAuthenticate({
+    findProfile: async () => ({ id: "user-1", role: "member", status: "active" }),
+    verifyToken: async () => ({ error: null, user: { id: "user-1" } }),
+  });
+  const req = createRequest("Bearer valid-token");
+  const res = createResponse();
+
+  await optionalAuthenticate(req, res, () => {});
+
+  assert.equal(req.auth.userId, "user-1");
 });
 
 test("authorizeRoles permits an allowed role", () => {

@@ -99,6 +99,21 @@ export function createAuthenticate({
   };
 }
 
+export function createOptionalAuthenticate(options = {}) {
+  const authenticate = createAuthenticate(options);
+
+  return function optionalAuthenticate(req, res, next) {
+    const authorization = req.get("authorization");
+
+    if (authorization === undefined || authorization === null) {
+      return next();
+    }
+
+    return authenticate(req, res, next);
+  };
+}
+
 const authenticate = createAuthenticate();
+export const optionalAuthenticate = createOptionalAuthenticate();
 
 export default authenticate;
