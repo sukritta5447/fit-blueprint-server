@@ -16,6 +16,7 @@ import notificationsRouter from "../routes/notifications.mjs";
 import postsRouter from "../routes/posts.mjs";
 import statusesRouter from "../routes/statuses.mjs";
 import systemRouter from "../routes/system.mjs";
+import uploadsRouter from "../routes/uploads.mjs";
 import {
   errorHandler,
   notFoundHandler,
@@ -50,6 +51,7 @@ app.use("/workout-logs", workoutLogsRouter);
 app.use("/body-measurements", bodyMeasurementsRouter);
 app.use("/nutrition-logs", nutritionLogsRouter);
 app.use("/personal-records", personalRecordsRouter);
+app.use("/uploads", uploadsRouter);
 app.use("/", systemRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
