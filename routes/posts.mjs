@@ -1,5 +1,7 @@
 import { Router } from "express";
-import authenticate from "../middlewares/authenticate.mjs";
+import authenticate, {
+  optionalAuthenticate,
+} from "../middlewares/authenticate.mjs";
 import { authorizeRoles } from "../middlewares/authorizeRoles.mjs";
 import validatePost, {
   postFields,
@@ -15,13 +17,28 @@ import pool from "../utils/db.mjs";
 const router = Router();
 const authorizeContentAdmin = authorizeRoles("content_admin", "super_admin");
 
-const postSelect = `
+function getPostSelect(likedByPlaceholder) {
+  const isLikedExpression = likedByPlaceholder
+    ? `EXISTS (
+        SELECT 1
+        FROM post_likes
+        WHERE post_likes.post_id = posts.id
+          AND post_likes.user_id = ${likedByPlaceholder}
+      )`
+    : "false";
+
+  return `
   SELECT
     posts.id,
     posts.image,
     posts.slug,
     posts.category_id,
     categories.name AS category,
+    COALESCE(
+      NULLIF(BTRIM(profiles.full_name), ''),
+      profiles.username,
+      'JB Fit Blueprint'
+    ) AS author,
     posts.title,
     posts.description,
     posts.date,
@@ -30,12 +47,15 @@ const postSelect = `
     posts.status_id,
     statuses.status,
     posts.likes_count,
+    ${isLikedExpression} AS is_liked,
     posts.created_at,
     posts.updated_at
   FROM posts
   JOIN categories ON posts.category_id = categories.id
   JOIN statuses ON posts.status_id = statuses.id
+  LEFT JOIN profiles ON posts.author_id = profiles.id
 `;
+}
 
 router.post(
   "/",
@@ -62,7 +82,7 @@ router.post(
   },
 );
 
-router.get("/", async (req, res, next) => {
+router.get("/", optionalAuthenticate, async (req, res, next) => {
   const { page: currentPage, limit, offset } = getPagination(req.query, 6);
   const values = [];
   const conditions = ["statuses.is_public = true"];
@@ -95,13 +115,17 @@ router.get("/", async (req, res, next) => {
 
     const totalPosts = countResult.rows[0].total;
     const totalPages = Math.ceil(totalPosts / limit);
-    const listValues = [...values, limit, offset];
+    const listValues = [...values];
+    const likedByPlaceholder = req.auth
+      ? `$${listValues.push(req.auth.userId)}`
+      : null;
+    listValues.push(limit, offset);
     const postsResult = await pool.query(
-      `${postSelect}
+      `${getPostSelect(likedByPlaceholder)}
        ${whereClause}
        ORDER BY posts.date DESC, posts.id DESC
-       LIMIT $${values.length + 1}
-       OFFSET $${values.length + 2}`,
+       LIMIT $${listValues.length - 1}
+       OFFSET $${listValues.length}`,
       listValues,
     );
 
@@ -125,8 +149,9 @@ router.get(
   async (req, res, next) => {
     try {
       const result = await pool.query(
-        `${postSelect}
+        `${getPostSelect("$1")}
          ORDER BY posts.updated_at DESC, posts.id DESC`,
+        [req.auth.userId],
       );
       return res.status(200).json({ data: result.rows });
     } catch (error) {
@@ -142,9 +167,10 @@ router.get(
   async (req, res, next) => {
     try {
       const postId = parsePositiveId(req.params.postId, "postId");
-      const result = await pool.query(`${postSelect} WHERE posts.id = $1`, [
-        postId,
-      ]);
+      const result = await pool.query(
+        `${getPostSelect("$2")} WHERE posts.id = $1`,
+        [postId, req.auth.userId],
+      );
 
       if (result.rowCount === 0) {
         return res.status(404).json({
@@ -160,14 +186,18 @@ router.get(
   },
 );
 
-router.get("/:postId", async (req, res, next) => {
+router.get("/:postId", optionalAuthenticate, async (req, res, next) => {
   try {
     const postId = parsePositiveId(req.params.postId, "postId");
+    const values = [postId];
+    const likedByPlaceholder = req.auth
+      ? `$${values.push(req.auth.userId)}`
+      : null;
     const result = await pool.query(
-      `${postSelect}
+      `${getPostSelect(likedByPlaceholder)}
        WHERE posts.id = $1
          AND statuses.is_public = true`,
-      [postId],
+      values,
     );
 
     if (result.rowCount === 0) {
