@@ -14,6 +14,7 @@ import {
 } from "../routes/memberResources.mjs";
 import notificationsRouter from "../routes/notifications.mjs";
 import postsRouter from "../routes/posts.mjs";
+import programCalculationRouter from "../routes/programCalculation.mjs";
 import statusesRouter from "../routes/statuses.mjs";
 import systemRouter from "../routes/system.mjs";
 import uploadsRouter from "../routes/uploads.mjs";
@@ -46,6 +47,7 @@ app.use("/posts/:postId/comments", commentsRouter);
 app.use("/posts/:postId/like", likesRouter);
 app.use("/posts", postsRouter);
 app.use("/notifications", notificationsRouter);
+app.use("/programs", programCalculationRouter);
 app.use("/programs", programsRouter);
 app.use("/workout-logs", workoutLogsRouter);
 app.use("/body-measurements", bodyMeasurementsRouter);
