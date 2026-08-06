@@ -25,6 +25,29 @@ import {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const configuredCorsOrigins = new Set(
+  (process.env.CORS_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+
+const defaultCorsOrigins = new Set([
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://fit-blueprint-site.vercel.app",
+]);
+
+function isAllowedCorsOrigin(origin) {
+  if (!origin) return true;
+  if (configuredCorsOrigins.has(origin) || defaultCorsOrigins.has(origin)) {
+    return true;
+  }
+
+  return /^https:\/\/fit-blueprint-site(?:-[a-z0-9-]+)?\.vercel\.app$/i.test(
+    origin,
+  );
+}
 
 app.use(express.json());
 
@@ -32,11 +55,9 @@ app.use(
   cors({
     allowedHeaders: ["Authorization", "Content-Type"],
     methods: ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"],
-    origin: [
-      "http://localhost:5173",
-      "http://localhost:3000",
-      "https://fit-blueprint-site.vercel.app",
-    ],
+    origin(origin, callback) {
+      callback(null, isAllowedCorsOrigin(origin));
+    },
   }),
 );
 
