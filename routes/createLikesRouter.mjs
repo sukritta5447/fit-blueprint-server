@@ -33,6 +33,18 @@ export function createLikesRouter({ authenticate, query }) {
         });
       }
 
+      if (result.rows[0].inserted) {
+        await query(
+          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+           SELECT posts.author_id, $1, 'like', posts.id, 'New article like', 'Someone liked your article'
+           FROM posts
+           WHERE posts.id = $2
+             AND posts.author_id IS NOT NULL
+             AND posts.author_id <> $1`,
+          [req.auth.userId, postId],
+        );
+      }
+
       const countResult = await query(
         "SELECT likes_count FROM posts WHERE id = $1",
         [postId],

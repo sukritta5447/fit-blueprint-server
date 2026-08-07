@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import authRouter from "../routes/auth.mjs";
+import adminDirectoryRouter from "../routes/adminDirectory.mjs";
 import categoriesRouter from "../routes/categories.mjs";
 import commentsRouter from "../routes/comments.mjs";
 import likesRouter from "../routes/likes.mjs";
@@ -56,12 +57,15 @@ app.use(
     allowedHeaders: ["Authorization", "Content-Type"],
     methods: ["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"],
     origin(origin, callback) {
-      callback(null, isAllowedCorsOrigin(origin));
+      const allowed = isAllowedCorsOrigin(origin);
+      console.info("CORS preflight check", { origin: origin ?? null, allowed });
+      callback(null, allowed);
     },
   }),
 );
 
 app.use("/auth", authRouter);
+app.use("/admin", adminDirectoryRouter);
 app.use("/categories", categoriesRouter);
 app.use("/statuses", statusesRouter);
 app.use("/posts/:postId/comments", commentsRouter);

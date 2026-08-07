@@ -19,9 +19,16 @@ router.get("/", async (req, res, next) => {
         [req.auth.userId],
       ),
       pool.query(
-        `SELECT * FROM notifications
-         WHERE recipient_id = $1 ${unreadCondition}
-         ORDER BY created_at DESC, id DESC
+        `SELECT
+           notifications.*,
+           actor.full_name AS actor_name,
+           actor.avatar_url AS actor_avatar_url,
+           posts.title AS post_title
+         FROM notifications
+         LEFT JOIN profiles AS actor ON actor.id = notifications.actor_id
+         LEFT JOIN posts ON posts.id = notifications.post_id
+         WHERE notifications.recipient_id = $1 ${unreadCondition}
+         ORDER BY notifications.created_at DESC, notifications.id DESC
          LIMIT $2 OFFSET $3`,
         [req.auth.userId, limit, offset],
       ),

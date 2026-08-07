@@ -1,6 +1,7 @@
 import { Router } from "express";
 import authenticate from "../middlewares/authenticate.mjs";
 import pool from "../utils/db.mjs";
+import { personalizeProgram } from "../services/aiProgramService.mjs";
 import { calculateProgram } from "../services/programCalculator.mjs";
 
 const router = Router();
@@ -9,6 +10,33 @@ router.use(authenticate);
 router.post("/calculate", async (req, res, next) => {
   try {
     const plan = calculateProgram(req.body);
+    let generatedPlan = plan;
+
+    try {
+      const aiPlan = await personalizeProgram(req.body, plan);
+
+      if (aiPlan) {
+        generatedPlan = {
+          ...plan,
+          workout_plan: {
+            ...plan.workout_plan,
+            ...aiPlan.workout_plan,
+          },
+          nutrition_plan: {
+            ...plan.nutrition_plan,
+            ...aiPlan.nutrition_plan,
+            daily_calories: plan.calculation.daily_calories,
+            macros: plan.calculation.macros,
+          },
+          ai_explanation: aiPlan.explanation,
+        };
+      }
+    } catch (error) {
+      console.warn("AI program personalization failed; using rule-based plan", {
+        message: error.message,
+      });
+    }
+
     const client = await pool.connect();
 
     try {
@@ -39,8 +67,8 @@ router.post("/calculate", async (req, res, next) => {
           req.body.days_per_week,
           req.body.diet,
           req.body.restrictions ?? "",
-          plan.workout_plan,
-          plan.nutrition_plan,
+          generatedPlan.workout_plan,
+          generatedPlan.nutrition_plan,
         ],
       );
 
@@ -48,8 +76,9 @@ router.post("/calculate", async (req, res, next) => {
       return res.status(201).json({
         data: result.rows[0],
         calculation: plan.calculation,
-        assumptions: plan.assumptions,
-        warnings: plan.warnings,
+        assumptions: generatedPlan.assumptions,
+        warnings: generatedPlan.warnings,
+        ai_explanation: generatedPlan.ai_explanation ?? null,
       });
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});

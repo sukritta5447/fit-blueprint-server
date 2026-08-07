@@ -75,6 +75,21 @@ router.post(
         values,
       );
 
+      if (result.rows[0].published_at) {
+        await pool.query(
+          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+           SELECT profiles.id, $1, 'publish', $2, 'New article published', $3
+           FROM profiles
+           WHERE profiles.id <> $1`,
+          [req.auth.userId, result.rows[0].id, result.rows[0].title],
+        );
+        await pool.query(
+          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+           VALUES ($1, $1, 'publish', $2, 'Post published successfully', $3)`,
+          [req.auth.userId, result.rows[0].id, result.rows[0].title],
+        );
+      }
+
       return res.status(201).json(result.rows[0]);
     } catch (error) {
       return next(error);
@@ -220,6 +235,13 @@ router.patch(
   async (req, res, next) => {
     try {
       const postId = parsePositiveId(req.params.postId, "postId");
+      const previousResult = await pool.query(
+        `SELECT posts.published_at, statuses.is_public
+         FROM posts
+         JOIN statuses ON statuses.id = posts.status_id
+         WHERE posts.id = $1`,
+        [postId],
+      );
       const input = Object.fromEntries(
         postFields
           .filter((field) => req.validatedBody[field] !== undefined)
@@ -238,6 +260,27 @@ router.patch(
         return res.status(404).json({
           message: "Server could not find a requested post to update",
         });
+      }
+
+      const wasPublic = previousResult.rows[0]?.is_public === true;
+      const currentStatusResult = await pool.query(
+        "SELECT is_public FROM statuses WHERE id = $1",
+        [result.rows[0].status_id],
+      );
+      const isNowPublic = currentStatusResult.rows[0]?.is_public === true;
+      if (!wasPublic && isNowPublic) {
+        await pool.query(
+          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+           SELECT profiles.id, $1, 'publish', $2, 'New article published', $3
+           FROM profiles
+           WHERE profiles.id <> $1`,
+          [req.auth.userId, result.rows[0].id, result.rows[0].title],
+        );
+        await pool.query(
+          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+           VALUES ($1, $1, 'publish', $2, 'Post published successfully', $3)`,
+          [req.auth.userId, result.rows[0].id, result.rows[0].title],
+        );
       }
 
       return res.status(200).json(result.rows[0]);
