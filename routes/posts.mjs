@@ -39,6 +39,8 @@ function getPostSelect(likedByPlaceholder) {
       profiles.username,
       'JB Fit Blueprint'
     ) AS author,
+    profiles.avatar_url AS author_avatar_url,
+    profiles.bio AS author_bio,
     posts.title,
     posts.description,
     posts.date,
