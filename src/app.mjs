@@ -16,6 +16,7 @@ import {
 import notificationsRouter from "../routes/notifications.mjs";
 import postsRouter from "../routes/posts.mjs";
 import programCalculationRouter from "../routes/programCalculation.mjs";
+import publicProfileRouter from "../routes/publicProfile.mjs";
 import statusesRouter from "../routes/statuses.mjs";
 import systemRouter from "../routes/system.mjs";
 import uploadsRouter from "../routes/uploads.mjs";
@@ -71,6 +72,7 @@ app.use("/statuses", statusesRouter);
 app.use("/posts/:postId/comments", commentsRouter);
 app.use("/posts/:postId/like", likesRouter);
 app.use("/posts", postsRouter);
+app.use("/public-profiles", publicProfileRouter);
 app.use("/notifications", notificationsRouter);
 app.use("/programs", programCalculationRouter);
 app.use("/programs", programsRouter);
