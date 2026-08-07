@@ -29,6 +29,10 @@ export function createAuthenticate({
     const accessToken = getBearerToken(req.get("authorization"));
 
     if (!accessToken) {
+      console.info("Authentication failed: missing Bearer token", {
+        method: req.method,
+        path: req.originalUrl,
+      });
       return res.status(401).json({
         code: "missing_access_token",
         message: "A Bearer access token is required",
@@ -49,6 +53,11 @@ export function createAuthenticate({
       }
 
       if (error || !user) {
+        console.info("Authentication failed: invalid or expired token", {
+          method: req.method,
+          path: req.originalUrl,
+          status: error?.status ?? null,
+        });
         return res.status(401).json({
           code: "invalid_access_token",
           message: "The access token is invalid or expired",

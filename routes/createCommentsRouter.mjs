@@ -20,10 +20,18 @@ function validateContent(content) {
   return content.trim();
 }
 
-export function createCommentsRouter({ authenticate, query }) {
+export function createCommentsRouter({ authenticate, optionalAuthenticate, query }) {
   const router = Router({ mergeParams: true });
+  const viewerMiddleware = optionalAuthenticate || ((req, res, next) => next());
+  const viewerExpression = optionalAuthenticate
+    ? `EXISTS (
+               SELECT 1 FROM comment_likes
+               WHERE comment_likes.comment_id = comments.id
+                 AND comment_likes.user_id = $4
+             )`
+    : "false";
 
-  router.get("/", async (req, res, next) => {
+  router.get("/", viewerMiddleware, async (req, res, next) => {
     try {
       const postId = parsePositiveId(req.params.postId, "postId");
       const { page, limit, offset } = getPagination(req.query);
@@ -47,7 +55,9 @@ export function createCommentsRouter({ authenticate, query }) {
              comments.updated_at,
              profiles.id AS author_id,
              profiles.full_name AS author_name,
-             profiles.avatar_url AS author_avatar_url
+             profiles.avatar_url AS author_avatar_url,
+             (SELECT COUNT(comment_likes.comment_id)::int FROM comment_likes WHERE comment_likes.comment_id = comments.id) AS likes_count,
+             ${viewerExpression} AS is_liked
            FROM comments
            JOIN profiles ON profiles.id = comments.author_id
            JOIN posts ON posts.id = comments.post_id
@@ -57,7 +67,9 @@ export function createCommentsRouter({ authenticate, query }) {
              AND statuses.is_public
            ORDER BY comments.created_at, comments.id
            LIMIT $2 OFFSET $3`,
-          [postId, limit, offset],
+          optionalAuthenticate
+            ? [postId, limit, offset, req.auth?.userId ?? null]
+            : [postId, limit, offset],
         ),
       ]);
       const total = countResult.rows[0].total;
@@ -70,6 +82,102 @@ export function createCommentsRouter({ authenticate, query }) {
           total,
           totalPages: Math.ceil(total / limit),
         },
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.put("/:commentId/like", authenticate, async (req, res, next) => {
+    try {
+      const postId = parsePositiveId(req.params.postId, "postId");
+      const commentId = parsePositiveId(req.params.commentId, "commentId");
+      const result = await query(
+        `WITH valid_comment AS (
+           SELECT comments.id, comments.author_id
+           FROM comments
+           JOIN posts ON posts.id = comments.post_id
+           JOIN statuses ON statuses.id = posts.status_id
+           WHERE comments.id = $1
+             AND comments.post_id = $2
+             AND NOT comments.is_deleted
+             AND statuses.is_public
+         ), inserted AS (
+           INSERT INTO comment_likes (comment_id, user_id)
+           SELECT id, $3 FROM valid_comment
+           ON CONFLICT (comment_id, user_id) DO NOTHING
+           RETURNING comment_id
+         )
+         SELECT
+           EXISTS (SELECT 1 FROM valid_comment) AS comment_exists,
+           EXISTS (SELECT 1 FROM inserted) AS inserted`,
+        [commentId, postId, req.auth.userId],
+      );
+
+      if (!result.rows[0].comment_exists) {
+        return res.status(404).json({
+          code: "comment_not_found",
+          message: "The requested comment was not found",
+        });
+      }
+
+      if (result.rows[0].inserted) {
+        await query(
+          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, comment_id, title, body)
+           SELECT recipients.recipient_id, $1, 'comment_like', $2, $3,
+             'Comment liked', 'Someone liked your comment'
+           FROM (
+             SELECT comments.author_id AS recipient_id
+             FROM comments
+             WHERE comments.id = $3 AND comments.author_id <> $1
+             UNION
+             SELECT profiles.id AS recipient_id
+             FROM profiles
+             WHERE profiles.role IN ('content_admin', 'support_admin', 'super_admin')
+               AND profiles.id <> $1
+           ) AS recipients`,
+          [req.auth.userId, postId, commentId],
+        );
+      }
+
+      const countResult = await query(
+        "SELECT COUNT(*)::int AS likes_count FROM comment_likes WHERE comment_id = $1",
+        [commentId],
+      );
+
+      return res.status(result.rows[0].inserted ? 201 : 200).json({
+        liked: true,
+        likes_count: countResult.rows[0].likes_count,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
+  router.delete("/:commentId/like", authenticate, async (req, res, next) => {
+    try {
+      const postId = parsePositiveId(req.params.postId, "postId");
+      const commentId = parsePositiveId(req.params.commentId, "commentId");
+      await query(
+        `DELETE FROM comment_likes
+         USING comments, posts, statuses
+         WHERE comment_likes.comment_id = comments.id
+           AND comments.post_id = posts.id
+           AND posts.status_id = statuses.id
+           AND statuses.is_public
+           AND comments.id = $1
+           AND comments.post_id = $2
+           AND comment_likes.user_id = $3`,
+        [commentId, postId, req.auth.userId],
+      );
+      const countResult = await query(
+        "SELECT COUNT(*)::int AS likes_count FROM comment_likes WHERE comment_id = $1",
+        [commentId],
+      );
+
+      return res.status(200).json({
+        liked: false,
+        likes_count: countResult.rows[0].likes_count,
       });
     } catch (error) {
       return next(error);
@@ -93,6 +201,25 @@ export function createCommentsRouter({ authenticate, query }) {
            JOIN statuses ON statuses.id = posts.status_id
            WHERE posts.id = $1 AND statuses.is_public
            RETURNING *
+         ), notified AS (
+           INSERT INTO notifications (recipient_id, actor_id, type, post_id, comment_id, title, body)
+           SELECT DISTINCT recipients.recipient_id, $2, recipients.type, $1, inserted.id,
+             CASE recipients.type
+               WHEN 'comment_reply' THEN 'New reply to your comment'
+               ELSE 'New comment on your article'
+             END,
+             inserted.content
+           FROM inserted
+           CROSS JOIN LATERAL (
+             SELECT posts.author_id AS recipient_id, 'comment' AS type
+             FROM posts
+             WHERE posts.id = $1 AND posts.author_id <> $2
+             UNION ALL
+             SELECT comments.author_id AS recipient_id, 'comment_reply' AS type
+             FROM comments
+             WHERE comments.id = inserted.parent_id
+               AND comments.author_id <> $2
+           ) AS recipients
          )
          SELECT
            inserted.id,
