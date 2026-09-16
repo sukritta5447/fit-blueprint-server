@@ -71,6 +71,16 @@ export function calculateProgram(input) {
   assertNumber(input.weight_kg, "weight_kg", 20, 500);
   assertNumber(input.height_cm, "height_cm", 100, 250);
   assertNumber(input.days_per_week, "days_per_week", 2, 6);
+  for (const field of ["age", "days_per_week"]) {
+    if (!Number.isInteger(input[field])) {
+      throw new HttpError(400, `${field} must be an integer`, "invalid_program_input");
+    }
+  }
+  for (const field of ["equipment", "restrictions", "injuries"]) {
+    if (input[field] !== undefined && typeof input[field] !== "string") {
+      throw new HttpError(400, `${field} must be a string`, "invalid_program_input");
+    }
+  }
   assertEnum(input.gender, "gender", GENDERS);
   assertEnum(input.goal, "goal", GOALS);
   assertEnum(input.experience, "experience", EXPERIENCES);

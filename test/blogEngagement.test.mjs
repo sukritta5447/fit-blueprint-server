@@ -102,6 +102,9 @@ test("PUT /posts/:postId/like creates an idempotent Like and returns the count",
   assert.deepEqual(response.body, { liked: true, likes_count: 4 });
   assert.match(calls[0].sql, /ON CONFLICT \(post_id, user_id\) DO NOTHING/);
   assert.deepEqual(calls[0].values, [12, "member-user-id"]);
+  assert.match(calls[0].sql, /notified AS/);
+  assert.match(calls[0].sql, /FROM inserted\s+JOIN posts/);
+  assert.equal(calls.length, 2);
 });
 
 test("PUT /posts/:postId/like returns 200 when the Like already exists", async () => {
@@ -273,4 +276,39 @@ test("PATCH and DELETE comments scope writes to their owner or an admin", async 
     false,
   ]);
   assert.deepEqual(calls[1].values, [8, 12, "admin-user-id", true]);
+});
+
+test("comment Like and notification are written together and repeated Likes are idempotent", async () => {
+  for (const inserted of [true, false]) {
+    const calls = [];
+    const app = createTestApp(async (sql, values) => {
+      calls.push({ sql, values });
+      return calls.length === 1
+        ? { rows: [{ comment_exists: true, inserted }] }
+        : { rows: [{ likes_count: 4 }] };
+    });
+    const response = await request(app, "/posts/12/comments/8/like", {
+      method: "PUT", headers: { authorization: "Bearer member" },
+    });
+    assert.equal(response.status, inserted ? 201 : 200);
+    assert.deepEqual(response.body, { liked: true, likes_count: 4 });
+    assert.deepEqual(calls[0].values, [8, 12, "member-user-id"]);
+    assert.match(calls[0].sql, /notified AS/);
+    assert.match(calls[0].sql, /FROM inserted\s+CROSS JOIN LATERAL/);
+    assert.equal(calls.length, 2);
+  }
+});
+
+test("a failed atomic Like write stops before fetching the count", async () => {
+  for (const path of ["/posts/12/like", "/posts/12/comments/8/like"]) {
+    let calls = 0;
+    const app = createTestApp(async () => {
+      calls++;
+      throw Object.assign(new Error("notification rejected"), { code: "23514" });
+    });
+    const response = await request(app, path, { method: "PUT", headers: { authorization: "Bearer member" } });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, "constraint_violation");
+    assert.equal(calls, 1);
+  }
 });

@@ -34,3 +34,15 @@ test("calculateProgram includes a safety warning when injuries are supplied", ()
 
   assert.equal(result.warnings.length, 1);
 });
+
+test("calculateProgram rejects fractional age and frequency and non-string optional fields", () => {
+  for (const input of [
+    { age: 30.5 }, { days_per_week: 3.5 }, { equipment: 123 },
+    { equipment: null }, { restrictions: {} }, { injuries: [] },
+  ]) {
+    assert.throws(() => calculateProgram({ ...baseInput, ...input }),
+      (error) => error.statusCode === 400 && error.code === "invalid_program_input");
+  }
+  const result = calculateProgram({ ...baseInput, equipment: "home", restrictions: "", injuries: "" });
+  assert.equal(result.workout_plan.days[0].exercises[1].name, "Push-up variation");
+});

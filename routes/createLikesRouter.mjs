@@ -19,6 +19,13 @@ export function createLikesRouter({ authenticate, query }) {
            SELECT id, $2 FROM published_post
            ON CONFLICT (post_id, user_id) DO NOTHING
            RETURNING post_id
+         ), notified AS (
+           INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+           SELECT posts.author_id, $2, 'like', posts.id, 'New article like', 'Someone liked your article'
+           FROM inserted
+           JOIN posts ON posts.id = inserted.post_id
+           WHERE posts.author_id IS NOT NULL
+             AND posts.author_id <> $2
          )
          SELECT
            EXISTS (SELECT 1 FROM published_post) AS post_exists,
@@ -31,18 +38,6 @@ export function createLikesRouter({ authenticate, query }) {
           code: "post_not_found",
           message: "The requested published post was not found",
         });
-      }
-
-      if (result.rows[0].inserted) {
-        await query(
-          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
-           SELECT posts.author_id, $1, 'like', posts.id, 'New article like', 'Someone liked your article'
-           FROM posts
-           WHERE posts.id = $2
-             AND posts.author_id IS NOT NULL
-             AND posts.author_id <> $1`,
-          [req.auth.userId, postId],
-        );
       }
 
       const countResult = await query(

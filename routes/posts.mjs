@@ -13,6 +13,7 @@ import {
   parsePositiveId,
 } from "../utils/api.mjs";
 import pool from "../utils/db.mjs";
+import { withTransaction } from "../utils/transaction.mjs";
 
 const router = Router();
 const authorizeContentAdmin = authorizeRoles("content_admin", "super_admin");
@@ -70,27 +71,34 @@ router.post(
       const fields = ["author_id", ...Object.keys(input)];
       const values = [req.auth.userId, ...Object.values(input)];
       const placeholders = values.map((_, index) => `$${index + 1}`).join(", ");
-      const result = await pool.query(
-        `INSERT INTO posts (${fields.join(", ")})
-         VALUES (${placeholders})
-         RETURNING *`,
-        values,
-      );
+      const result = await withTransaction(pool, async (client) => {
+        const result = await client.query(
+          `INSERT INTO posts (${fields.join(", ")})
+           VALUES (${placeholders})
+           RETURNING *`,
+          values,
+        );
 
-      if (result.rows[0].published_at) {
-        await pool.query(
-          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
-           SELECT profiles.id, $1, 'publish', $2, 'New article published', $3
-           FROM profiles
-           WHERE profiles.id <> $1`,
-          [req.auth.userId, result.rows[0].id, result.rows[0].title],
+        const statusResult = await client.query(
+          "SELECT is_public FROM statuses WHERE id = $1",
+          [result.rows[0].status_id],
         );
-        await pool.query(
-          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
-           VALUES ($1, $1, 'publish', $2, 'Post published successfully', $3)`,
-          [req.auth.userId, result.rows[0].id, result.rows[0].title],
-        );
-      }
+        if (statusResult.rows[0]?.is_public === true) {
+          await client.query(
+            `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+             SELECT profiles.id, $1, 'publish', $2, 'New article published', $3
+             FROM profiles
+             WHERE profiles.id <> $1`,
+            [req.auth.userId, result.rows[0].id, result.rows[0].title],
+          );
+          await client.query(
+            `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+             VALUES ($1, $1, 'publish', $2, 'Post published successfully', $3)`,
+            [req.auth.userId, result.rows[0].id, result.rows[0].title],
+          );
+        }
+        return result;
+      });
 
       return res.status(201).json(result.rows[0]);
     } catch (error) {
@@ -237,52 +245,60 @@ router.patch(
   async (req, res, next) => {
     try {
       const postId = parsePositiveId(req.params.postId, "postId");
-      const previousResult = await pool.query(
-        `SELECT posts.published_at, statuses.is_public
-         FROM posts
-         JOIN statuses ON statuses.id = posts.status_id
-         WHERE posts.id = $1`,
-        [postId],
-      );
       const input = Object.fromEntries(
         postFields
           .filter((field) => req.validatedBody[field] !== undefined)
           .map((field) => [field, req.validatedBody[field]]),
       );
       const { assignments, values } = buildUpdateClause(input);
-      const result = await pool.query(
-        `UPDATE posts
-         SET ${assignments}
-         WHERE id = $${values.length + 1}
-         RETURNING *`,
-        [...values, postId],
-      );
+      const result = await withTransaction(pool, async (client) => {
+        const previousResult = await client.query(
+          `SELECT posts.published_at, statuses.is_public
+           FROM posts
+           JOIN statuses ON statuses.id = posts.status_id
+           WHERE posts.id = $1
+           FOR UPDATE OF posts`,
+          [postId],
+        );
+        const result = await client.query(
+          `UPDATE posts
+           SET ${assignments}
+           WHERE id = $${values.length + 1}
+           RETURNING *`,
+          [...values, postId],
+        );
+
+        if (result.rowCount === 0) {
+          return result;
+        }
+
+        const wasPublic = previousResult.rows[0]?.is_public === true;
+        const currentStatusResult = await client.query(
+          "SELECT is_public FROM statuses WHERE id = $1",
+          [result.rows[0].status_id],
+        );
+        const isNowPublic = currentStatusResult.rows[0]?.is_public === true;
+        if (!wasPublic && isNowPublic) {
+          await client.query(
+            `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+             SELECT profiles.id, $1, 'publish', $2, 'New article published', $3
+             FROM profiles
+             WHERE profiles.id <> $1`,
+            [req.auth.userId, result.rows[0].id, result.rows[0].title],
+          );
+          await client.query(
+            `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
+             VALUES ($1, $1, 'publish', $2, 'Post published successfully', $3)`,
+            [req.auth.userId, result.rows[0].id, result.rows[0].title],
+          );
+        }
+        return result;
+      });
 
       if (result.rowCount === 0) {
         return res.status(404).json({
           message: "Server could not find a requested post to update",
         });
-      }
-
-      const wasPublic = previousResult.rows[0]?.is_public === true;
-      const currentStatusResult = await pool.query(
-        "SELECT is_public FROM statuses WHERE id = $1",
-        [result.rows[0].status_id],
-      );
-      const isNowPublic = currentStatusResult.rows[0]?.is_public === true;
-      if (!wasPublic && isNowPublic) {
-        await pool.query(
-          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
-           SELECT profiles.id, $1, 'publish', $2, 'New article published', $3
-           FROM profiles
-           WHERE profiles.id <> $1`,
-          [req.auth.userId, result.rows[0].id, result.rows[0].title],
-        );
-        await pool.query(
-          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, title, body)
-           VALUES ($1, $1, 'publish', $2, 'Post published successfully', $3)`,
-          [req.auth.userId, result.rows[0].id, result.rows[0].title],
-        );
       }
 
       return res.status(200).json(result.rows[0]);

@@ -107,6 +107,21 @@ export function createCommentsRouter({ authenticate, optionalAuthenticate, query
            SELECT id, $3 FROM valid_comment
            ON CONFLICT (comment_id, user_id) DO NOTHING
            RETURNING comment_id
+         ), notified AS (
+           INSERT INTO notifications (recipient_id, actor_id, type, post_id, comment_id, title, body)
+           SELECT recipients.recipient_id, $3, 'comment_like', $2, inserted.comment_id,
+             'Comment liked', 'Someone liked your comment'
+           FROM inserted
+           CROSS JOIN LATERAL (
+             SELECT valid_comment.author_id AS recipient_id
+             FROM valid_comment
+             WHERE valid_comment.author_id <> $3
+             UNION
+             SELECT profiles.id AS recipient_id
+             FROM profiles
+             WHERE profiles.role IN ('content_admin', 'support_admin', 'super_admin')
+               AND profiles.id <> $3
+           ) AS recipients
          )
          SELECT
            EXISTS (SELECT 1 FROM valid_comment) AS comment_exists,
@@ -119,25 +134,6 @@ export function createCommentsRouter({ authenticate, optionalAuthenticate, query
           code: "comment_not_found",
           message: "The requested comment was not found",
         });
-      }
-
-      if (result.rows[0].inserted) {
-        await query(
-          `INSERT INTO notifications (recipient_id, actor_id, type, post_id, comment_id, title, body)
-           SELECT recipients.recipient_id, $1, 'comment_like', $2, $3,
-             'Comment liked', 'Someone liked your comment'
-           FROM (
-             SELECT comments.author_id AS recipient_id
-             FROM comments
-             WHERE comments.id = $3 AND comments.author_id <> $1
-             UNION
-             SELECT profiles.id AS recipient_id
-             FROM profiles
-             WHERE profiles.role IN ('content_admin', 'support_admin', 'super_admin')
-               AND profiles.id <> $1
-           ) AS recipients`,
-          [req.auth.userId, postId, commentId],
-        );
       }
 
       const countResult = await query(
