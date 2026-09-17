@@ -20,19 +20,17 @@ function createMemberResourceRouter({
   router.get("/", async (req, res, next) => {
     try {
       const { page, limit, offset } = getPagination(req.query);
-      const [countResult, rowsResult] = await Promise.all([
-        pool.query(
-          `SELECT COUNT(*)::int AS total FROM ${table} WHERE user_id = $1`,
-          [req.auth.userId],
-        ),
-        pool.query(
-          `SELECT * FROM ${table}
-           WHERE user_id = $1
-           ORDER BY ${orderBy}
-           LIMIT $2 OFFSET $3`,
-          [req.auth.userId, limit, offset],
-        ),
-      ]);
+      const countResult = await pool.query(
+        `SELECT COUNT(*)::int AS total FROM ${table} WHERE user_id = $1`,
+        [req.auth.userId],
+      );
+      const rowsResult = await pool.query(
+        `SELECT * FROM ${table}
+         WHERE user_id = $1
+         ORDER BY ${orderBy}
+         LIMIT $2 OFFSET $3`,
+        [req.auth.userId, limit, offset],
+      );
       const total = countResult.rows[0].total;
 
       return res.status(200).json({

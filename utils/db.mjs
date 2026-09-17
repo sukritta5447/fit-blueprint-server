@@ -15,6 +15,10 @@ const isLocalDatabase = ["localhost", "127.0.0.1"].includes(
 
 const pool = new Pool({
   connectionString,
+  // Keep session-pool connections small across serverless instances.
+  max: 2,
+  idleTimeoutMillis: 1000,
+  connectionTimeoutMillis: 5000,
   ssl: isLocalDatabase ? false : { rejectUnauthorized: false },
 });
 
